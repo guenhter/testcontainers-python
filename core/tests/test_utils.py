@@ -1,3 +1,5 @@
+import io
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -76,3 +78,32 @@ def test_get_running_container_id(fake_cgroup: Path) -> None:
     container_id = "b78eebb08f89158ed6e2ed2fe"
     fake_cgroup.write_text(f"13:cpuset:/docker/{container_id}")
     assert utils.get_running_in_container_id() == container_id
+
+
+# ---------------------------------------------------------------------------
+# build_copy_to_tar
+# ---------------------------------------------------------------------------
+
+
+def test_build_copy_to_tar_bytes() -> None:
+    data = b"hello world"
+    tar_bytes = utils.build_tar_file("/tmp/hello.txt", data)
+
+    with tarfile.open(fileobj=io.BytesIO(tar_bytes)) as tar:
+        members = tar.getmembers()
+        assert len(members) == 1
+        assert members[0].name == "tmp/hello.txt"
+        assert tar.extractfile(members[0]).read() == data
+
+
+def test_build_copy_to_tar_file(tmp_path: Path) -> None:
+    src = tmp_path / "myfile.txt"
+    src.write_bytes(b"file content")
+
+    tar_bytes = utils.build_tar_file("/tmp/myfile.txt", src)
+
+    with tarfile.open(fileobj=io.BytesIO(tar_bytes)) as tar:
+        members = tar.getmembers()
+        assert len(members) == 1
+        assert members[0].name == "tmp/myfile.txt"
+        assert tar.extractfile(members[0]).read() == b"file content"

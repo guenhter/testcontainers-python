@@ -1,10 +1,12 @@
+import io
 import logging
 import os
 import platform
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
-from typing import Any, Final, Optional
+from typing import Any, Final, Optional, Union
 
 LINUX = "linux"
 MAC = "mac"
@@ -98,3 +100,20 @@ def get_running_in_container_id() -> Optional[str]:
         if path.startswith("/docker"):
             return path.removeprefix("/docker/")
     return None
+
+
+def build_tar_file(target: str, source: Union[bytes, Path]) -> bytes:
+    """Pack *source* into an in-memory tar archive whose member path equals *target* (relative to /)."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        # Docker's put_archive extracts relative to the given path; we upload to "/"
+        # so the member name must be the target path stripped of its leading slash.
+        arcname = target.lstrip("/")
+        if isinstance(source, bytes):
+            info = tarfile.TarInfo(name=arcname)
+            info.size = len(source)
+            info.mode = 0o644
+            tar.addfile(info, io.BytesIO(source))
+        else:
+            tar.add(str(source), arcname=arcname)
+    return buf.getvalue()
