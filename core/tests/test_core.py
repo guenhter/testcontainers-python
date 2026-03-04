@@ -46,3 +46,50 @@ def test_docker_container_with_env_file():
             assert "ADMIN_EMAIL=admin@example.org" in output
             assert "ROOT_URL=example.org/app" in output
             print(output)
+
+
+# ---------------------------------------------------------------------------
+# with_copy_to
+# ---------------------------------------------------------------------------
+
+
+def test_with_copy_to_bytes():
+    """Bytes passed to with_copy_to should be readable inside the running container."""
+    with (
+        DockerContainer("alpine")
+        .with_command(["cat", "/tmp/hello.txt"])
+        .with_copy_to("/tmp/hello.txt", b"hello from bytes") as c
+    ):
+        c.wait()
+        stdout, _ = c.get_logs()
+        assert stdout.decode() == "hello from bytes"
+
+
+def test_with_copy_to_file(tmp_path: Path):
+    """A local file passed to with_copy_to should be readable inside the running container."""
+    src = tmp_path / "copied.txt"
+    src.write_bytes(b"hello from file")
+
+    with DockerContainer("alpine").with_command(["cat", "/tmp/copied.txt"]).with_copy_to("/tmp/copied.txt", src) as c:
+        c.wait()
+        stdout, _ = c.get_logs()
+        assert stdout.decode() == "hello from file"
+
+
+def test_with_copy_to_directory(tmp_path: Path):
+    """A local directory passed to with_copy_to should be readable inside the running container."""
+    (tmp_path / "a.txt").write_text("aaa")
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / "b.txt").write_text("bbb")
+
+    with (
+        DockerContainer("alpine")
+        .with_command(["sh", "-c", "cat /mydata/a.txt && cat /mydata/sub/b.txt"])
+        .with_copy_to("/mydata", tmp_path)
+    ) as c:
+        c.wait()
+        stdout, _ = c.get_logs()
+        output = stdout.decode()
+        assert "aaa" in output
+        assert "bbb" in output

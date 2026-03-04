@@ -1,6 +1,7 @@
 import contextlib
 import sys
 from os import PathLike
+from pathlib import Path
 from socket import socket
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Optional, TypedDict, Union, cast
@@ -18,7 +19,7 @@ from testcontainers.core.docker_client import DockerClient
 from testcontainers.core.exceptions import ContainerConnectException, ContainerStartException
 from testcontainers.core.labels import LABEL_SESSION_ID, SESSION_ID
 from testcontainers.core.network import Network
-from testcontainers.core.utils import is_arm, setup_logger
+from testcontainers.core.utils import build_tar_file, is_arm, setup_logger
 from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 from testcontainers.core.waiting_utils import WaitStrategy
 
@@ -97,6 +98,7 @@ class DockerContainer:
 
         self._kwargs = kwargs
         self._wait_strategy: Optional[WaitStrategy] = _wait_strategy
+        self._copy_to_container: list[tuple[str, Union[bytes, Path]]] = []
 
     def with_env(self, key: str, value: str) -> Self:
         self.env[key] = value
@@ -190,16 +192,20 @@ class DockerContainer:
             else {}
         )
 
-        self._container = docker_client.run(
+        self._container = docker_client.create(
             self.image,
             command=self._command,
-            detach=True,
             environment=self.env,
             ports=cast("dict[int, Optional[int]]", self.ports),
             name=self._name,
             volumes=self.volumes,
             **{**network_kwargs, **self._kwargs},
         )
+
+        for target, source in self._copy_to_container:
+            self._container.put_archive("/", build_tar_file(target, source))
+
+        docker_client.start(self._container)
 
         if self._wait_strategy is not None:
             self._wait_strategy.wait_until_ready(self)
@@ -270,6 +276,27 @@ class DockerContainer:
         self.volumes[str(host)] = mapping
         return self
 
+    def with_copy_to(self, target: str, source: Union[bytes, str, PathLike[str]]) -> Self:
+        """
+        Copy a file, directory, or raw bytes into the container at startup.
+
+        :param target: Absolute path inside the container where the data should be placed.
+        :param source: Either ``bytes``/``bytearray`` (raw file content) or a path
+            (``str`` / :class:`pathlib.Path`) to a local file or directory.
+
+        :doctest:
+
+        >>> from testcontainers.core.container import DockerContainer
+        >>> container = DockerContainer("alpine")
+        >>> container = container.with_copy_to("/tmp/hello.txt", b"hello world")
+
+        """
+        if isinstance(source, (bytes, bytearray)):
+            self._copy_to_container.append((target, bytes(source)))
+        else:
+            self._copy_to_container.append((target, Path(source)))
+        return self
+
     def get_wrapped_container(self) -> "Container":
         return self._container
 
@@ -300,6 +327,13 @@ class DockerContainer:
         if not self._container:
             raise ContainerStartException("Container should be started before executing a command")
         return self._container.exec_run(command)
+
+    def wait(self) -> int:
+        """Wait for the container to stop and return its exit code."""
+        if not self._container:
+            raise ContainerStartException("Container should be started before waiting")
+        result = self._container.wait()
+        return int(result["StatusCode"])
 
     def _configure(self) -> None:
         # placeholder if subclasses want to define this and use the default start method
